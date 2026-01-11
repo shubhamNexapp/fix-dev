@@ -9,6 +9,13 @@ module.exports = {
     USER_UPDATED_SUCCESSFULLY: "User updated successfully",
     PROVIDER_REGISTER_SUCCESSFULLY: "Provider registered successfully",
     PROVIDER_UPDATED_SUCCESSFULLY: "Provider updated successfully",
+    SERVICE_BOOKED_SUCCESSFULLY: "Service booked successfully",
+    SERVICE_ACCEPTED_SUCCESSFULLY: "Service accepted successfully",
+    SERVICE_REJECTED_SUCCESSFULLY: "Service rejected successfully",
+    SERVICE_COMPLETED_SUCCESSFULLY: "Service completed successfully",
+    RATING_SUBMITTED_SUCCESSFULLY: "Rating submitted successfully",
+    FETCH_USERS_SERVICES: "User's services fetched successfully",
+    FETCH_PROVIDERS_SERVICES: "Provider's services fetched successfully",
   },
   error: {
     ERROR: "Server Error",
@@ -18,6 +25,6 @@ module.exports = {
     USER_NOT_FOUND: "User not found",
     INVALID_CREDENTIALS: "Invalid credentials",
     INVALID_TOKEN: "Invalid token",
-    SERVICE_HISTORY_NOT_FOUND: "Service history not found", 
+    SERVICE_HISTORY_NOT_FOUND: "Service history not found",
   },
 };

@@ -1,9 +1,16 @@
 const mongoose = require("mongoose");
 
 const providerSchema = mongoose.Schema({
+  // Java Auth Integration - Links to PostgreSQL user ID
+  javaUserId: { 
+    type: Number, 
+    sparse: true,  // Allow null for backward compatibility with existing providers
+    index: true 
+  },
+
   isDeleted: { type: Boolean, default: false },
   email: { type: String, unique: true },
-  password: { type: String },
+  password: { type: String }, // Optional now - Java Auth handles authentication
   address: { type: String },
   // New service-related fields
   name: { type: String, default: "" },
@@ -151,7 +158,10 @@ providerSchema.index({
 
 // Alternative: Create a 2dsphere index for more advanced geospatial operations
 // Uncomment if using MongoDB's geospatial features extensively
-// providerSchema.index({ "currentLocation": "2dsphere" });
+providerSchema.index({ "currentLocation": "2dsphere" });
+
+// Index for Java Auth user ID lookups
+providerSchema.index({ javaUserId: 1 });
 
 const Provider = mongoose.model("Provider", providerSchema);
 

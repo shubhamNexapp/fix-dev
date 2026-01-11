@@ -10,6 +10,9 @@ const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
 const providerRoutes = require("./routes/providerRoutes");
 const adminRoutes = require("./routes/adminRoutes");
+const eventServicesRoutes = require("./routes/eventServicesRoutes");
+const traditionalServices = require("./routes/traditionalServiceRoutes");
+
 
 const app = express();
 const server = http.createServer(app);
@@ -35,6 +38,9 @@ app.use("/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/provider", providerRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/event-services", eventServicesRoutes);
+app.use("/api/traditional-services", traditionalServices);
+
 
 // Health check endpoint
 app.get('/', (req, res) => {

@@ -4,6 +4,7 @@ const User = require("../models/user");
 const messages = require("../utils/messages");
 const { validateCoordinates } = require("../utils/locationUtils");
 const generateToken = require("../utils/generateToken");
+const { registerUserInJavaAuth, registerProviderInJavaAuth } = require("../utils/authServiceClient");
 
 // ---------------- Get all users ----------------
 const getUsers = async (req, res) => {
@@ -33,7 +34,8 @@ const register = async (req, res) => {
       address,
       city,
       pincode,
-      emergencyContact
+      emergencyContact,
+      location // { lat, lng }
     } = req.body;
 
     // Basic validation
@@ -45,7 +47,15 @@ const register = async (req, res) => {
       });
     }
 
-    // Enhanced validation for new fields
+    if (!fullName) {
+      return res.status(400).json({
+        success: false,
+        statusCode: 400,
+        message: "Full name is required",
+      });
+    }
+
+    // Enhanced validation for optional fields
     const errors = {};
 
     if (fullName && fullName.length < 2) {
@@ -68,6 +78,16 @@ const register = async (req, res) => {
       errors.pincode = "Pincode must be 5-6 digits";
     }
 
+    if (location) {
+      if (!location.lat || !location.lng) {
+        errors.location = "Location must have both lat and lng";
+      } else if (location.lat < -90 || location.lat > 90) {
+        errors.location = "Invalid latitude";
+      } else if (location.lng < -180 || location.lng > 180) {
+        errors.location = "Invalid longitude";
+      }
+    }
+
     if (Object.keys(errors).length > 0) {
       return res.status(400).json({
         success: false,
@@ -77,57 +97,128 @@ const register = async (req, res) => {
       });
     }
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({
+    // STEP 1: Register user in Java Auth Service
+    let javaAuthResponse;
+    try {
+      javaAuthResponse = await registerUserInJavaAuth({
+        email,
+        password,
+        fullName,
+        phoneNumber: phone || null
+      });
+      console.log("Java Auth registration successful:", javaAuthResponse.userId);
+    } catch (javaAuthError) {
+      console.error("Java Auth registration failed:", javaAuthError);
+      return res.status(javaAuthError.status || 500).json({
         success: false,
-        statusCode: 400,
-        message: messages.error.USER_ALREADY_REGISTERED,
+        statusCode: javaAuthError.status || 500,
+        message: javaAuthError.message || "Authentication service error",
+        details: javaAuthError.details
       });
     }
 
-    // Create new user with enhanced fields
-    const userData = {
-      email,
-      password,
-      fullName: fullName || "",
-      name: fullName || "", // Keep name field for backward compatibility
-      phone: phone || "",
-      address: address || "",
-      city: city || "",
-      pincode: pincode || "",
-      emergencyContact: emergencyContact || ""
-    };
-
-    const newUser = new User(userData);
-
-    newUser.userId = newUser._id.toString(); // Set userId to string version of _id 
-
-    await newUser.save();
-
-    return res.status(201).json({
-      success: true,
-      statusCode: 201,
-      message: "User registered successfully",
-      userId: newUser._id.toString(),
-      token: generateToken(newUser.userId),
-      userType: 'user',
-      data: {
-        _id: newUser._id.toString(),
-        userId: newUser._id.toString(),
-        email: newUser.email,
-        fullName: newUser.fullName,
-        name: newUser.fullName, // Use fullName as name for display
-        phone: newUser.phone,
-        address: newUser.address,
-        city: newUser.city,
-        pincode: newUser.pincode,
-        emergencyContact: newUser.emergencyContact,
-        createdAt: newUser.createdAt,
-        updatedAt: newUser.updatedAt
+    // STEP 2: Create user in MongoDB with business data
+    try {
+      // Check if user already exists in MongoDB (edge case: previous failed registration)
+      const existingUser = await User.findOne({ email });
+      if (existingUser) {
+        console.warn(`User with email ${email} already exists in MongoDB`);
+        // Return existing data with new tokens from Java Auth
+        return res.status(200).json({
+          success: true,
+          statusCode: 200,
+          message: "User already exists, logged in successfully",
+          accessToken: javaAuthResponse.accessToken,
+          refreshToken: javaAuthResponse.refreshToken,
+          tokenType: javaAuthResponse.tokenType,
+          expiresIn: javaAuthResponse.expiresIn,
+          userId: existingUser._id.toString(),
+          javaUserId: javaAuthResponse.userId,
+          userType: 'user',
+          data: {
+            _id: existingUser._id.toString(),
+            javaUserId: existingUser.javaUserId,
+            email: existingUser.email,
+            fullName: existingUser.fullName,
+            phone: existingUser.phone,
+            address: existingUser.address,
+            city: existingUser.city,
+            pincode: existingUser.pincode,
+            location: existingUser.location
+          }
+        });
       }
-    });
+
+      // Create new user in MongoDB with business fields
+      const userData = {
+        javaUserId: javaAuthResponse.userId, // Store Java Auth userId
+        email: javaAuthResponse.email,
+        fullName: javaAuthResponse.fullName,
+        name: javaAuthResponse.fullName,
+        phone: phone || "",
+        address: address || "",
+        city: city || "",
+        pincode: pincode || "",
+        emergencyContact: emergencyContact || "",
+        role: 'user',
+        location: location ? {
+          lat: location.lat,
+          lng: location.lng,
+          lastUpdated: new Date()
+        } : {
+          lat: null,
+          lng: null,
+          lastUpdated: null
+        }
+      };
+
+      const newUser = new User(userData);
+      newUser.userId = newUser._id.toString(); // Keep for backward compatibility
+      await newUser.save();
+
+      console.log(`User synced to MongoDB: ${newUser._id} (Java Auth ID: ${javaAuthResponse.userId})`);
+
+      // STEP 3: Return combined response with tokens + MongoDB data
+      return res.status(201).json({
+        success: true,
+        statusCode: 201,
+        message: "User registered successfully",
+        accessToken: javaAuthResponse.accessToken,
+        refreshToken: javaAuthResponse.refreshToken,
+        tokenType: javaAuthResponse.tokenType,
+        expiresIn: javaAuthResponse.expiresIn,
+        userId: newUser._id.toString(),
+        javaUserId: javaAuthResponse.userId,
+        userType: 'user',
+        data: {
+          _id: newUser._id.toString(),
+          javaUserId: newUser.javaUserId,
+          email: newUser.email,
+          fullName: newUser.fullName,
+          phone: newUser.phone,
+          address: newUser.address,
+          city: newUser.city,
+          pincode: newUser.pincode,
+          emergencyContact: newUser.emergencyContact,
+          location: newUser.location,
+          createdAt: newUser.createdAt,
+          updatedAt: newUser.updatedAt
+        }
+      });
+
+    } catch (mongoError) {
+      console.error("MongoDB save failed after Java Auth success:", mongoError);
+      // Java Auth user is created, but MongoDB failed
+      return res.status(500).json({
+        success: false,
+        statusCode: 500,
+        message: "User created in authentication service but failed to sync business data",
+        error: mongoError.message,
+        javaUserId: javaAuthResponse.userId,
+        suggestion: "Please contact support to complete your registration"
+      });
+    }
+
   } catch (error) {
     console.error("Registration error:", error);
     return res.status(500).json({
@@ -210,10 +301,11 @@ const providerRegister = async (req, res) => {
       serviceCategories,
       serviceTypes,
       experience,
-      latitude,  // NEW: Location data
-      longitude  // NEW: Location data
+      latitude,
+      longitude
     } = req.body;
 
+    // Basic validation
     if (!email || !password || !address) {
       return res.status(400).json({
         success: false,
@@ -222,75 +314,143 @@ const providerRegister = async (req, res) => {
       });
     }
 
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        statusCode: 400,
+        message: "Provider name is required",
+      });
+    }
+
     // Validate coordinates if provided
-    if ((latitude !== undefined || longitude !== undefined) &&
-      !validateCoordinates(parseFloat(latitude), parseFloat(longitude))) {
-      return res.status(400).json({
-        success: false,
-        statusCode: 400,
-        message: "Invalid coordinates provided.",
-      });
-    }
-
-    const existingProvider = await Provider.findOne({ email });
-    if (existingProvider) {
-      return res.status(400).json({
-        success: false,
-        statusCode: 400,
-        message: "Provider with this email already exists.",
-      });
-    }
-
-    // Prepare provider data with defaults for backward compatibility
-    const providerData = {
-      email,
-      password,
-      address,
-      name: name || "",
-      phone: phone || "",
-      serviceCategories: serviceCategories || ["plumber", "electrician", "carpenter", "painter", "ac_repair", "cleaning"],
-      serviceTypes: serviceTypes || [],
-      experience: experience || "0 years",
-      rating: 0,
-      isAvailable: true,
-      // NEW: Add location if provided
-      location: latitude && longitude ? {
-        latitude: parseFloat(latitude),
-        longitude: parseFloat(longitude),
-        address: address || "",
-        lastUpdated: new Date()
-      } : null
-    };
-
-    const newProvider = new Provider(providerData);
-    newProvider.providerId = newProvider._id.toString(); // Set providerId to string version of _id
-    await newProvider.save();
-
-    return res.status(200).json({
-      success: true,
-      statusCode: 200,
-      message: "Provider registered successfully",
-      providerId: newProvider.providerId,
-      token: generateToken(newProvider.providerId),
-      userType: 'provider',
-      data: {
-        _id: newProvider._id.toString(),
-        providerId: newProvider._id.toString(),
-        email: newProvider.email,
-        address: newProvider.address,
-        name: newProvider.name || "",
-        phone: newProvider.phone || "",
-        lat: newProvider.location?.latitude || null,
-        lng: newProvider.location?.longitude || null,
-        serviceCategories: newProvider.serviceCategories || [],
-        serviceTypes: newProvider.serviceTypes || [],
-        experience: newProvider.experience || null,
-        rating: newProvider.rating || 0,
-        isAvailable: newProvider.isAvailable !== undefined ? newProvider.isAvailable : true,
-        location: newProvider.location, // NEW: Include location in response
-        createdAt: newProvider.createdAt
+    if ((latitude !== undefined || longitude !== undefined)) {
+      const lat = parseFloat(latitude);
+      const lng = parseFloat(longitude);
+      if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        return res.status(400).json({
+          success: false,
+          statusCode: 400,
+          message: "Invalid coordinates provided.",
+        });
       }
-    });
+    }
+
+    // STEP 1: Register provider in Java Auth Service
+    let javaAuthResponse;
+    try {
+      javaAuthResponse = await registerProviderInJavaAuth({
+        email,
+        password,
+        fullName: name,
+        phoneNumber: phone || null
+      });
+      console.log("Java Auth provider registration successful:", javaAuthResponse.userId);
+    } catch (javaAuthError) {
+      console.error("Java Auth provider registration failed:", javaAuthError);
+      return res.status(javaAuthError.status || 500).json({
+        success: false,
+        statusCode: javaAuthError.status || 500,
+        message: javaAuthError.message || "Authentication service error",
+        details: javaAuthError.details
+      });
+    }
+
+    // STEP 2: Create provider in MongoDB with business data
+    try {
+      const existingProvider = await Provider.findOne({ email });
+      if (existingProvider) {
+        console.warn(`Provider with email ${email} already exists in MongoDB`);
+        return res.status(200).json({
+          success: true,
+          statusCode: 200,
+          message: "Provider already exists, logged in successfully",
+          accessToken: javaAuthResponse.accessToken,
+          refreshToken: javaAuthResponse.refreshToken,
+          tokenType: javaAuthResponse.tokenType,
+          expiresIn: javaAuthResponse.expiresIn,
+          providerId: existingProvider._id.toString(),
+          javaUserId: javaAuthResponse.userId,
+          userType: 'provider',
+          data: {
+            _id: existingProvider._id.toString(),
+            javaUserId: existingProvider.javaUserId,
+            email: existingProvider.email,
+            name: existingProvider.name,
+            phone: existingProvider.phone,
+            serviceCategories: existingProvider.serviceCategories,
+            location: existingProvider.location
+          }
+        });
+      }
+
+      // Prepare provider data with defaults
+      const providerData = {
+        javaUserId: javaAuthResponse.userId, // Store Java Auth userId
+        email: javaAuthResponse.email,
+        name: javaAuthResponse.fullName || name,
+        phone: phone || "",
+        address: address,
+        serviceCategories: serviceCategories || ["plumber", "electrician", "carpenter", "painter", "ac_repair", "cleaning"],
+        serviceTypes: serviceTypes || [],
+        experience: experience || "0 years",
+        role: 'provider',
+        rating: 0,
+        isAvailable: true,
+        location: latitude && longitude ? {
+          latitude: parseFloat(latitude),
+          longitude: parseFloat(longitude),
+          address: address || "",
+          lastUpdated: new Date()
+        } : null
+      };
+
+      const newProvider = new Provider(providerData);
+      newProvider.providerId = newProvider._id.toString(); // Keep for backward compatibility
+      await newProvider.save();
+
+      console.log(`Provider synced to MongoDB: ${newProvider._id} (Java Auth ID: ${javaAuthResponse.userId})`);
+
+      // STEP 3: Return combined response
+      return res.status(200).json({
+        success: true,
+        statusCode: 200,
+        message: "Provider registered successfully",
+        accessToken: javaAuthResponse.accessToken,
+        refreshToken: javaAuthResponse.refreshToken,
+        tokenType: javaAuthResponse.tokenType,
+        expiresIn: javaAuthResponse.expiresIn,
+        providerId: newProvider._id.toString(),
+        javaUserId: javaAuthResponse.userId,
+        userType: 'provider',
+        data: {
+          _id: newProvider._id.toString(),
+          javaUserId: newProvider.javaUserId,
+          email: newProvider.email,
+          name: newProvider.name,
+          phone: newProvider.phone,
+          address: newProvider.address,
+          serviceCategories: newProvider.serviceCategories,
+          serviceTypes: newProvider.serviceTypes,
+          experience: newProvider.experience,
+          rating: newProvider.rating,
+          isAvailable: newProvider.isAvailable,
+          location: newProvider.location,
+          createdAt: newProvider.createdAt
+        }
+      });
+
+    } catch (mongoError) {
+      console.error("MongoDB save failed after Java Auth success:", mongoError);
+      return res.status(500).json({
+        success: false,
+        statusCode: 500,
+        message: "Provider created in authentication service but failed to sync business data",
+        error: mongoError.message,
+        javaUserId: javaAuthResponse.userId,
+        suggestion: "Please contact support to complete your registration"
+      });
+    }
+
   } catch (error) {
     console.error("Provider registration error:", error);
     return res.status(500).json({

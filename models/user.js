@@ -1,10 +1,17 @@
 const mongoose = require("mongoose");
 
 const userSchema = mongoose.Schema({
+  // Java Auth Integration - Links to PostgreSQL user ID
+  javaUserId: { 
+    type: Number, 
+    sparse: true,  // Allow null for backward compatibility with existing users
+    index: true 
+  },
+
   // Basic authentication fields
   isDeleted: { type: Boolean, default: false },
   email: { type: String, unique: true, required: true },
-  password: { type: String, required: true },
+  password: { type: String }, // Optional now - Java Auth handles authentication
 
   // Enhanced profile fields for frontend compatibility
   name: { type: String, default: "" },
@@ -14,7 +21,7 @@ const userSchema = mongoose.Schema({
   city: { type: String, default: "" },
   pincode: { type: String, default: "" }, // NEW: Pincode field for frontend
   emergencyContact: { type: String, default: "" }, // NEW: Emergency contact field
-  userId: { type: String },
+  userId: { type: Number },
   role: { type: String, default: 'user' }, // Role field
 
   // Location data
@@ -48,6 +55,7 @@ const userSchema = mongoose.Schema({
 // Indexes for efficient querying (email index already created by unique: true in schema)
 userSchema.index({ phone: 1 });
 userSchema.index({ "location.lat": 1, "location.lng": 1 });
+userSchema.index({ javaUserId: 1 }); // Index for Java Auth user ID lookups
 
 const User = mongoose.model("User", userSchema);
 

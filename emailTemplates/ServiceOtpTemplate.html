@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Service Completion OTP</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f8f9fa;
+      color: #333;
+      padding: 20px;
+    }
+    .container {
+      max-width: 600px;
+      margin: auto;
+      background-color: #ffffff;
+      border-radius: 10px;
+      padding: 25px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+    .otp-box {
+      font-size: 28px;
+      font-weight: bold;
+      color: #2a7ae2;
+      margin: 20px 0;
+    }
+    p {
+      font-size: 16px;
+      line-height: 1.5;
+    }
+    footer {
+      font-size: 13px;
+      color: #777;
+      margin-top: 30px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Hello!</h2>
+    <p>Your OTP for confirming service completion is:</p>
+    <div class="otp-box">{{OTP}}</div>
+    <p>This OTP will expire in 1 hour.</p>
+    <hr/>
+    <p><strong>Service:</strong> {{SERVICE_NAME}}</p>
+    <p><strong>Date:</strong> {{SERVICE_DATE}}</p>
+    <footer>
+      Thank you for using our service!<br/>
+      &copy; {{CURRENT_YEAR}} Your Company Name
+    </footer>
+  </div>
+</body>
+</html>
